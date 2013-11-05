@@ -7,7 +7,7 @@ return {
 	LrPluginName = "Drupal Publish",
 
   LrExportServiceProvider = {
-    title = "DrupalPublish",
+    title = "Drupal Publish",
     file = 'DrupalPublishProvider.lua',
   },
 
