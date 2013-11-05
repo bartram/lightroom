@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Lightroom feature.
+ */
+
+include_once 'lightroom.features.inc';
