@@ -2,6 +2,7 @@
 local LrView = import 'LrView'
 local LrPathUtils = import 'LrPathUtils'
 local LrDialogs = import 'LrDialogs'
+local LrErrors = import 'LrErrors'
 local LrHttp = import 'LrHttp'
 
 local LrLogger = import 'LrLogger'
@@ -11,16 +12,10 @@ JSON = (loadfile(LrPathUtils.child(_PLUGIN.path, "JSON.lua")))() -- one-time loa
 local logger = LrLogger( 'console' )
 logger:enable( "print" ) -- or "logfile"
 
-local validateURL = function ()
-  return true
-end
-
 local headers = {
   { field = 'Content-Type', value = 'application/json' },
   { field = 'Accept', value = 'application/json' },
 }
-local user, token
-
 
 local DrupalPublish = {
   supportsIncrementalPublish = 'only',
@@ -33,30 +28,68 @@ local DrupalPublish = {
   showSections = {
     'imageSettings'
   },
+  allowFileFormats = { 'JPEG' }
   --  small_icon = 'icon.small.png',
 }
 
-DrupalPublish.userLogin = function (props)
+DrupalPublish.getUserToken = function ( props )
 
-  if not user then
-    -- User login
-    local data = {
-      username = props.username,
-      password = props.password
-    }
-    local body, response = LrHttp.post( props.url .. 'lightroom/user/login', JSON.encode(data), headers)
-    user = JSON.decode(body)
+  local body, response = LrHttp.get( props.url .. 'services/session/token', headers)
 
-    -- Get CSRF token
-    token = LrHttp.get( props.url .. 'services/session/token', headers)
+  if (response.status == 200) then
     headers = {
       { field = 'Content-Type', value = 'application/json' },
       { field = 'Accept', value = 'application/json' },
-      { field = 'X-CSRF-Token', value = token },
+      { field = 'X-CSRF-Token', value = body },
     }
+    return body
   end
 
-  return user
+end
+
+DrupalPublish.userLogin = function (props)
+
+  -- @todo consider reusing user and userLogin
+
+  -- User login
+  local data = {
+    username = props.username,
+    password = props.password
+  }
+  local body, response = LrHttp.post( props.url .. 'lightroom/user/login', JSON.encode(data), {
+    { field = 'Content-Type', value = 'application/json' },
+    { field = 'Accept', value = 'application/json' },
+    -- Clear cookies, so that we start a new session
+    { field = 'Cookie', value = '' },
+  })
+  local data = JSON.decode(body)
+
+  if not (response.status == 200) then
+    logger:trace(body)
+    user = nil
+    if data then
+      local message = table.concat(data, '\n')
+      LrErrors.throwUserError( message )
+    else
+      LrErrors.throwUserError( 'User login failed. Please check the URL, user name, and password in the Publish Settings dialog, and confirm that Services are properly configured on your web site.' )
+    end
+  end
+
+  if not (data.user) then
+    LrErrors.throwUserError( 'Unable to load user.' )
+  end
+
+  -- Set user
+  local user = data.user
+
+  -- Get CSRF token
+  local userToken = DrupalPublish.getUserToken( props )
+
+  if not userToken then
+    LrErrors.throwUserError( 'Unable to get user token.' )
+  end
+
+  return user, userToken
 
 end
 
@@ -108,6 +141,7 @@ DrupalPublish.startDialog = function( props )
 end
 
 DrupalPublish.endDialog = function( props, why )
+  -- @todo validate user info here
 end
 
 DrupalPublish.sectionsForBottomOfDialog = function( viewFactory, propertyTable )
@@ -130,15 +164,7 @@ DrupalPublish.sectionsForBottomOfDialog = function( viewFactory, propertyTable )
 				viewFactory:edit_field {
 				  value = bind 'url',
 					fill_horizontal = 1,
-					immediate = true,
-          validate = function( view, value )
-            if #value > 0 then
-              -- check length of entered text -- any input, enable button propertyTable.buttonEnabled = true
-            else
-              -- no input, disable button propertyTable.buttonEnabled = false
-            end
-            return true, value
-          end
+			    immediate = true,
 				}
 
 			},
@@ -150,15 +176,7 @@ DrupalPublish.sectionsForBottomOfDialog = function( viewFactory, propertyTable )
 			  },
 			  viewFactory:edit_field {
 			    value = bind 'username',
-					immediate = true,
-          validate = function( view, value )
-            if #value > 0 then
-              -- check length of entered text -- any input, enable button propertyTable.buttonEnabled = true
-            else
-              -- no input, disable button propertyTable.buttonEnabled = false
-            end
-            return true, value
-          end
+			    immediate = true,
 			  },
 			},
 			viewFactory:row {
@@ -169,15 +187,7 @@ DrupalPublish.sectionsForBottomOfDialog = function( viewFactory, propertyTable )
 			  },
 			  viewFactory:password_field {
 			    value = bind 'password',
-					immediate = true,
-          validate = function( view, value )
-            if #value > 0 then
-              -- check length of entered text -- any input, enable button propertyTable.buttonEnabled = true
-            else
-              -- no input, disable button propertyTable.buttonEnabled = false
-            end
-            return true, value
-          end
+			    immediate = true,
 			  },
 			},
 		},
@@ -188,25 +198,23 @@ DrupalPublish.sectionsForBottomOfDialog = function( viewFactory, propertyTable )
 end
 DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
 
+	local props = exportContext.propertyTable
+
 	-- Make a local reference to the export parameters.
 
 	local exportSession = exportContext.exportSession
-	local props = exportContext.propertyTable
-
-
-  -- Collection Info
-  local publishedCollectionInfo = exportContext.publishedCollectionInfo
-
-  -- User login
-  -- Get CSRF token
-  -- Upload files
-  -- Create presentation
-
-  -- @todo Validate login
-  local user = DrupalPublish.userLogin(props)
 
 	-- Set progress title.
 	local numPhotos = exportSession:countRenditions()
+	local progressScope = exportContext:configureProgress {
+		title = numPhotos > 1 and string.format("Publishing %d photos.", numPhotos) or "Publishing 1 photo."
+	}
+
+  -- Get collection info
+  local publishedCollectionInfo = exportContext.publishedCollectionInfo
+
+  -- User login
+  local user, userToken = DrupalPublish.userLogin(props)
 
   local progressScope = exportContext:configureProgress {
 		title = "Uploading",
@@ -231,6 +239,7 @@ DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
     -- Just use the basic fields, so we don't overwrite anything
     node = {
       nid = node.nid,
+		  type = 'collection',
       name = user.uid,
       title = publishedCollectionInfo.name,
       field_collection_images = { und = {} },
@@ -250,34 +259,44 @@ DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
 	for i, rendition in exportContext:renditions{ stopIfCanceled = true } do
 
 		-- Wait for next photo to render.
-		local success, pathOrMessage = rendition:waitForRender()
+		local success, filePath = rendition:waitForRender()
 
 		-- Check for cancellation again after photo has been rendered.
-		if progressScope:isCanceled() then break end
+		if progressScope:isCanceled() then
+		  return
+		end
 
 		if success then
 
-			local fileName = LrPathUtils.leafName( pathOrMessage )
+			local fileName = LrPathUtils.leafName( filePath )
+
 			-- Upload the new file
-      body, response = LrHttp.postMultipart( props.url .. 'lightroom/file/create_raw',
+      local body, response = LrHttp.postMultipart( props.url .. 'lightroom/file/create_raw',
         {
           {
             name = 'files[]',
             fileName = fileName,
-            filePath = pathOrMessage,
+            filePath = filePath,
             contentType = 'application/octet-stream'
           }
         },
         {
           { field = 'Accept', value = 'application/json' },
-          { field = 'X-CSRF-Token', value = token },
+          { field = 'X-CSRF-Token', value = userToken },
         }
       )
+
+      -- Handle errors
+      if not (response.status == 200) then
+        -- log the error
+        -- continue or cancel?
+        LrErrors.throwUserError( 'Unable to upload file.' )
+
+      end
 
       local file = JSON.decode(body)
       local fid = file[1].fid
 
-      local match = false
 		  if rendition.publishedPhotoId then
 		    -- Replace existing fid with the new fid
 		    images[rendition.publishedPhotoId] = {
@@ -289,8 +308,10 @@ DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
 		      fid = fid
 		    }
       end
+
       -- Set the remote ID for this rendition
 			rendition:recordPublishedPhotoId( fid )
+
 		end
 
   end
@@ -300,6 +321,7 @@ DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
   	table.insert(node.field_collection_images.und, value)
   end
 
+  -- Create presentation
   node = DrupalPublish.saveNode( props, node )
 	exportSession:recordRemoteCollectionId( node.nid )
 
@@ -312,13 +334,18 @@ DrupalPublish.imposeSortOrderOnPublishedCollection = function( props, info, remo
     DrupalPublish.userLogin(props)
 
     local node = DrupalPublish.loadNode(props, info.remoteCollectionId)
-    node.field_collection_images = { und = {} }
+    -- Reset the field
+    node = {
+      nid = node.nid,
+      field_collection_images = { und = {} }
+    }
 
-    -- Reset the order of images
+    -- Update the order of images
     for i, fid in pairs(remoteIdSequence) do
     	table.insert(node.field_collection_images.und, { fid = fid })
     end
 
+    -- Save node
     DrupalPublish.saveNode(props, node)
 
   end
@@ -337,6 +364,8 @@ DrupalPublish.renamePublishedCollection = function( props, info )
       nid = node.nid,
       title = info.name,
     }
+
+    -- Save node
     DrupalPublish.saveNode(props, node)
 
 	end
