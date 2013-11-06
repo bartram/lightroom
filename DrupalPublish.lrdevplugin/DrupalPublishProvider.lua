@@ -65,7 +65,6 @@ DrupalPublish.userLogin = function (props)
   local data = JSON.decode(body)
 
   if not (response.status == 200) then
-    logger:trace(body)
     user = nil
     if data then
       local message = table.concat(data, '\n')
@@ -106,10 +105,21 @@ DrupalPublish.saveNode = function (props, node)
   if node.nid then
       -- Update node
     local body, response = LrHttp.post(props.url .. 'lightroom/node/' .. node.nid, JSON.encode(node), headers, 'PUT')
+
+    if not (response.status == 200) then
+      LrErrors.throwUserError( 'Unable to update collection.' )
+    end
+
   else
       -- Create node
     local body, response = LrHttp.post(props.url .. 'lightroom/node', JSON.encode(node), headers)
+
+    if not (response.status == 200) then
+      LrErrors.throwUserError( 'Unable to create collection.' )
+    end
+
     node = JSON.decode(body)
+
   end
 
   return node
@@ -240,7 +250,6 @@ DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
     node = {
       nid = node.nid,
 		  type = 'collection',
-      name = user.uid,
       title = publishedCollectionInfo.name,
       field_collection_images = { und = {} },
     }
@@ -248,8 +257,8 @@ DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
   else
 
 		node = {
+		  uid = user.uid,
 		  type = 'collection',
-		  name = user.uid,
 		  title = publishedCollectionInfo.name,
 		  field_collection_images = { und = {} },
 		}
