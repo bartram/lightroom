@@ -1,10 +1,12 @@
 name = Lightroom
 description = Provides content type, fields, and services for automatically publishing content from Adobe Lightroom
 core = 7.x
+package = Other
 dependencies[] = ctools
 dependencies[] = features
 dependencies[] = image
 dependencies[] = media
+dependencies[] = rest_server
 dependencies[] = services
 dependencies[] = text
 features[ctools][] = services:services:3

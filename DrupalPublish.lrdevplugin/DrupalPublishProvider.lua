@@ -49,46 +49,69 @@ end
 
 DrupalPublish.userLogin = function (props)
 
-  -- @todo consider reusing user and userLogin
-
-  -- User login
-  local data = {
-    username = props.username,
-    password = props.password
-  }
-  local body, response = LrHttp.post( props.url .. 'lightroom/user/login', JSON.encode(data), {
-    { field = 'Content-Type', value = 'application/json' },
-    { field = 'Accept', value = 'application/json' },
-    -- Clear cookies, so that we start a new session
-    { field = 'Cookie', value = '' },
-  })
-  local data = JSON.decode(body)
-
-  if not (response.status == 200) then
-    user = nil
-    if data then
-      local message = table.concat(data, '\n')
-      LrErrors.throwUserError( message )
-    else
-      LrErrors.throwUserError( 'User login failed. Please check the URL, user name, and password in the Publish Settings dialog, and confirm that Services are properly configured on your web site.' )
-    end
-  end
-
-  if not (data.user) then
-    LrErrors.throwUserError( 'Unable to load user.' )
-  end
-
-  -- Set user
-  local user = data.user
-
-  -- Get CSRF token
+  -- check if there is an existing user
   local userToken = DrupalPublish.getUserToken( props )
 
-  if not userToken then
-    LrErrors.throwUserError( 'Unable to get user token.' )
-  end
+  -- if we're already logged in
+  if userToken then
 
-  return user, userToken
+    local body, response = LrHttp.post( props.url .. 'lightroom/system/connect', '', headers)
+    local data = JSON.decode(body)
+
+    if not (response.status == 200) then
+      logger:trace('System connect error')
+      LrErrors.throwUserError( 'Unable to connect' )
+    end
+    if not (data.user) then
+      logger:trace('System connect error')
+      LrErrors.throwUserError( 'Unable to get user' )
+    end
+
+    local user = data.user
+
+    return user, userToken
+
+  -- otherwise ..
+  else
+
+    -- User login
+    local data = {
+      username = props.username,
+      password = props.password
+    }
+    local body, response = LrHttp.post( props.url .. 'lightroom/user/login', JSON.encode(data), {
+      { field = 'Content-Type', value = 'application/json' },
+      { field = 'Accept', value = 'application/json' },
+    })
+    local data = JSON.decode(body)
+
+    if not (response.status == 200) then
+      logger:trace('User login error')
+      if data then
+        local message = table.concat(data, '\n')
+        LrErrors.throwUserError( message )
+      else
+        LrErrors.throwUserError( 'User login failed. Please check the URL, user name, and password in the Publish Settings dialog, and confirm that Services are properly configured on your web site.' )
+      end
+    end
+
+    if not (data.user) then
+      LrErrors.throwUserError( 'Unable to get user.' )
+    end
+
+    -- Set user
+    local user = data.user
+
+    -- Get CSRF token
+    local userToken = DrupalPublish.getUserToken( props )
+
+    if not userToken then
+      LrErrors.throwUserError( 'Unable to get user token.' )
+    end
+
+    return user, userToken
+
+  end
 
 end
 
