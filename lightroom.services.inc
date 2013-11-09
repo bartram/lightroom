@@ -77,12 +77,14 @@ function lightroom_default_services_endpoint() {
         ),
       ),
     ),
-    'user' => array(
-      'operations' => array(
-        'retrieve' => array(
+    'system' => array(
+      'actions' => array(
+        'connect' => array(
           'enabled' => '1',
         ),
       ),
+    ),
+    'user' => array(
       'actions' => array(
         'login' => array(
           'enabled' => '1',
