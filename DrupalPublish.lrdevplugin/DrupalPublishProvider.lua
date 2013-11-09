@@ -49,15 +49,21 @@ end
 
 DrupalPublish.userLogin = function (props)
 
-  -- check if there is an existing user
+  -- The user login process is this:
+  --   Get a CSRF token
+  --   Use that token to get the current user
+  --   If the user is anonymous, login
+  --     @todo how to handle if anonymous users aren't allowed? is that even possible?
+  --   If login successful, get a new CSRF token
+  --   Return the user and the CSRF token
+
+  -- see if we're logged in
+  -- we need a user token to post, even if we're anonymous (i think)
   local userToken = DrupalPublish.getUserToken( props )
+  local body, response = LrHttp.post( props.url .. 'lightroom/system/connect', '', headers)
+  local data = JSON.decode(body)
 
-  -- if we're already logged in
-  if userToken then
-
-    local body, response = LrHttp.post( props.url .. 'lightroom/system/connect', '', headers)
-    local data = JSON.decode(body)
-
+  if not (response.status == 200) then
     if not (response.status == 200) then
       logger:trace('System connect error')
       LrErrors.throwUserError( 'Unable to connect' )
@@ -67,12 +73,10 @@ DrupalPublish.userLogin = function (props)
       LrErrors.throwUserError( 'Unable to get user' )
     end
 
-    local user = data.user
+  end
 
-    return user, userToken
-
-  -- otherwise ..
-  else
+  local user = data.user
+  if user.uid == 0 then
 
     -- User login
     local data = {
@@ -100,18 +104,18 @@ DrupalPublish.userLogin = function (props)
     end
 
     -- Set user
-    local user = data.user
+    user = data.user
 
     -- Get CSRF token
-    local userToken = DrupalPublish.getUserToken( props )
+    userToken = DrupalPublish.getUserToken( props )
 
     if not userToken then
       LrErrors.throwUserError( 'Unable to get user token.' )
     end
 
-    return user, userToken
-
   end
+
+  return user, userToken
 
 end
 
@@ -320,6 +324,7 @@ DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
 
       -- Handle errors
       if not (response.status == 200) then
+        logger:trace(body)
         -- log the error
         -- continue or cancel?
         LrErrors.throwUserError( 'Unable to upload file.' )
