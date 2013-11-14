@@ -37,6 +37,13 @@ function lightroom_default_services_endpoint() {
     ),
   );
   $endpoint->resources = array(
+    'collection' => array(
+      'actions' => array(
+        'types' => array(
+          'enabled' => '1',
+        ),
+      ),
+    ),
     'file' => array(
       'operations' => array(
         'create' => array(

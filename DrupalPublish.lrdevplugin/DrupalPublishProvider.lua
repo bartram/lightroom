@@ -18,6 +18,10 @@ local headers = {
 }
 
 local DrupalPublish = {
+  titleForPublishedCollection = 'Node',
+  titleForPublishedCollection_standalone = 'Node',
+  titleForPublishedSmartCollection = 'Smart Node',
+  titleForPublishedSmartCollection_standalone = 'Smart Node',
   supportsIncrementalPublish = 'only',
   supportsCustomSortOrder = true,
   exportPresetFields = {
@@ -64,15 +68,12 @@ DrupalPublish.userLogin = function (props)
   local data = JSON.decode(body)
 
   if not (response.status == 200) then
-    if not (response.status == 200) then
-      logger:trace('System connect error')
-      LrErrors.throwUserError( 'Unable to connect' )
-    end
-    if not (data.user) then
-      logger:trace('System connect error')
-      LrErrors.throwUserError( 'Unable to get user' )
-    end
-
+    logger:trace('System connect error')
+    LrErrors.throwUserError( 'Unable to connect.' )
+  end
+  if not (data.user) then
+    logger:trace('System connect error')
+    LrErrors.throwUserError( 'Unable to get user.' )
   end
 
   local user = data.user
@@ -130,19 +131,21 @@ end
 DrupalPublish.saveNode = function (props, node)
 
   if node.nid then
+
       -- Update node
     local body, response = LrHttp.post(props.url .. 'lightroom/node/' .. node.nid, JSON.encode(node), headers, 'PUT')
 
     if not (response.status == 200) then
-      LrErrors.throwUserError( 'Unable to update collection.' )
+      DrupalPublish.throwError( 'Unable to update node.', body )
     end
 
   else
-      -- Create node
+
+    -- Create node
     local body, response = LrHttp.post(props.url .. 'lightroom/node', JSON.encode(node), headers)
 
     if not (response.status == 200) then
-      LrErrors.throwUserError( 'Unable to create collection.' )
+      DrupalPublish.throwError( 'Unable to create node.', body )
     end
 
     node = JSON.decode(body)
@@ -165,6 +168,16 @@ DrupalPublish.getCollectionBehaviorInfo = function ( publishSettings )
 
 end
 
+DrupalPublish.throwError = function (message, body)
+
+  local data = JSON.decode(body)
+  if data then
+    message = message .. '\n' .. table.concat(data, '\n')
+  end
+  LrErrors.throwUserError( message )
+
+end
+
 DrupalPublish.getCommentsFromPublishedCollection = function ( publishSettings, arrayOfPhotoInfo, commentCallback )
 end
 
@@ -175,10 +188,11 @@ DrupalPublish.getRatingsFromPublishedCollection = function ( publishSettings, ar
 end
 
 DrupalPublish.startDialog = function( props )
+
 end
 
 DrupalPublish.endDialog = function( props, why )
-  -- @todo validate user info here
+
 end
 
 DrupalPublish.sectionsForBottomOfDialog = function( viewFactory, propertyTable )
@@ -200,8 +214,7 @@ DrupalPublish.sectionsForBottomOfDialog = function( viewFactory, propertyTable )
 
 				viewFactory:edit_field {
 				  value = bind 'url',
-					fill_horizontal = 1,
-			    immediate = true,
+					fill_horizontal = 1
 				}
 
 			},
@@ -233,6 +246,99 @@ DrupalPublish.sectionsForBottomOfDialog = function( viewFactory, propertyTable )
 	return result
 
 end
+
+DrupalPublish.viewForCollectionSettings = function( f, props, info )
+
+  local publishedCollection = info.publishedCollection;
+	local collectionSettings = assert( info.collectionSettings )
+
+	-- Fill in default parameters. This code sample targets a hypothetical service
+	-- that allows users to enable or disable ratings and comments on a per-collection
+	-- basis.
+
+	local user, userToken = DrupalPublish.userLogin(props)
+
+	local body, response = LrHttp.post(props.url .. 'lightroom/collection/types', '', headers)
+  local data = JSON.decode(body)
+
+	if not (response.status == 200) then
+    LrDialogs.showError( 'Unable to get node types.' )
+    return
+	end
+	if not (data) then
+	  LrDialogs.showError( 'Unable to read node types.' )
+  end
+
+	local types = {}
+	local title = ' '
+  for i, item in ipairs(data) do
+    table.insert(types, {title = item.name, value = item.type})
+
+    if item.type == collectionSettings.type then
+      title = item.name
+    end
+
+  end
+
+  -- todo types empty, throw error
+  if #types == 0 then
+    LrDialogs.showError( 'No collection node types configured. You must add \'field_collection_images\' to at least one node type.' )
+  end
+
+  if collectionSettings.type == nil then
+    collectionSettings.type = types[1]['value']
+  end
+  if collectionSettings.status == nil then
+    collectionSettings.status = 1
+  end
+  if collectionSettings.promote == nil then
+    collectionSettings.promote = 0
+  end
+
+  local share = import 'LrView'.share
+	local bind = import 'LrView'.bind
+
+	return f:group_box {
+    title = 'Node Settings',
+		fill_horizontal = 1,
+	  size = 'regular',
+	  f:column {
+      bind_to_object = assert( collectionSettings ),
+      spacing = f:label_spacing(),
+      size = 'small',
+
+      f:row {
+    		f:static_text {
+    			title = 'Type:',
+    			alignment = 'left',
+    		},
+        publishedCollection and publishedCollection:getRemoteId() and
+    	    f:static_text {
+    	      title = title,
+    	    }
+    	    or
+    	    f:popup_menu {
+    	      items = types,
+    	      value = bind 'type',
+    	    },
+      },
+			f:checkbox {
+				title = "Published",  -- this should be localized via LOC
+				value = bind 'status',
+				checked_value = 1,
+				unchecked_value = 0,
+			},
+			f:checkbox {
+				title = "Promote to front page",  -- this should be localized via LOC
+				value = bind 'promote',
+				checked_value = 1,
+				unchecked_value = 0,
+			},
+	  }
+	}
+
+end
+
 DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
 
 	local props = exportContext.propertyTable
@@ -249,6 +355,10 @@ DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
 
   -- Get collection info
   local publishedCollectionInfo = exportContext.publishedCollectionInfo
+  if publishedCollectionInfo.type == nil then
+    -- todo throw exception if no collection type
+    publishedCollectionInfo.type = 'collection'
+  end
 
   -- User login
   local user, userToken = DrupalPublish.userLogin(props)
@@ -276,8 +386,10 @@ DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
     -- Just use the basic fields, so we don't overwrite anything
     node = {
       nid = node.nid,
-		  type = 'collection',
+		  type = publishedCollectionInfo.type,
       title = publishedCollectionInfo.name,
+      status = publishedCollectionInfo.status,
+      promote = publishedCollectionInfo.promote,
       field_collection_images = { und = {} },
     }
 
@@ -287,6 +399,8 @@ DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
 		  uid = user.uid,
 		  type = 'collection',
 		  title = publishedCollectionInfo.name,
+      status = publishedCollectionInfo.status,
+      promote = publishedCollectionInfo.promote,
 		  field_collection_images = { und = {} },
 		}
 
