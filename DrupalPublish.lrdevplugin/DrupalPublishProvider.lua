@@ -342,7 +342,8 @@ DrupalPublish.updateCollectionSettings = function( props, info )
 		  uid = user.uid,
 		  type = collectionSettings.type,
 		  title = info.name,
---      status = collectionSettings.status,
+      status = 0, -- don't publish an empty collection
+      field_collection_images = { und = {} },
 		}
 
     -- Create presentation
@@ -361,7 +362,6 @@ DrupalPublish.updateCollectionSettings = function( props, info )
     node = {
       nid = node.nid,
       title = info.name,
---      status = collectionSettings.status,
     }
 
     node = DrupalPublish.saveNode( props, node )
@@ -397,16 +397,22 @@ DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
 	}
 
   local node = DrupalPublish.loadNode( props, publishedCollectionInfo.remoteId )
-  local images = {}
-  if node.field_collection_images and node.field_collection_images.und then
-    for delta, item in pairs(node.field_collection_images.und) do
-      images[item.fid] = { fid = item.fid }
-    end
+
+  if not ( node.field_collection_images and node.field_collection_images.und ) then
+    node.field_collection_images = { und = {} }
+  end
+
+  -- Get rid of the extra stuff that Drupal returns
+  for i, v in pairs(node.field_collection_images.und) do
+    node.field_collection_images.und[i] = { fid = v.fid }
   end
 
   node = {
     nid = node.nid,
-    field_collection_images = { und = {} },
+    title = node.title,
+    status = node.status,
+    promote = node.promote,
+    field_collection_images = node.field_collection_images,
   }
 
 	for i, rendition in exportContext:renditions{ stopIfCanceled = true } do
@@ -452,31 +458,29 @@ DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
       local fid = file[1].fid
 
 		  if rendition.publishedPhotoId then
-		    -- Replace existing fid with the new fid
-		    images[rendition.publishedPhotoId] = {
-		      fid = fid
-		    }
+        -- Update existing files
+		    for i, v in pairs(node.field_collection_images.und) do
+		      if v.fid == rendition.publishedPhotoId then
+		        node.field_collection_images.und[i] = { fid = fid }
+		      end
+		    end
+
 		  else
 		    -- Insert a new file
-		    images[fid] = {
-		      fid = fid
-		    }
+		    table.insert(node.field_collection_images.und, { fid = fid })
       end
 
       -- Set the remote ID for this rendition
 			rendition:recordPublishedPhotoId( fid )
 
+      -- Save node
+      node = DrupalPublish.saveNode( props, node )
+
 		end
 
   end
 
-  -- Map images table to field array
-  for key, value in pairs(images) do
-  	table.insert(node.field_collection_images.und, value)
-  end
-
-  -- Save node
-  node = DrupalPublish.saveNode( props, node )
+  exportSession:recordRemoteCollectionId( node.nid )
 
 end
 
