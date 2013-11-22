@@ -64,6 +64,11 @@ function lightroom_default_services_endpoint() {
           'enabled' => '1',
         ),
       ),
+      'targeted_actions' => array(
+        'metadata' => array(
+          'enabled' => '1',
+        ),
+      ),
     ),
     'node' => array(
       'operations' => array(
