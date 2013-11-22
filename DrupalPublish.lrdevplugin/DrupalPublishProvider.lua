@@ -457,6 +457,14 @@ DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
       local file = JSON.decode(body)
       local fid = file[1].fid
 
+      -- Update metadata
+      local caption = rendition.photo:getFormattedMetadata('caption')
+      local metadata = {
+        field_caption = { und = { { value = caption } } }
+      }
+
+      LrHttp.post( props.url .. 'lightroom/file/' .. fid .. '/metadata', JSON.encode(metadata), headers )
+
 		  if rendition.publishedPhotoId then
         -- Update existing files
 		    for i, v in pairs(node.field_collection_images.und) do
@@ -467,7 +475,7 @@ DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
 
 		  else
 		    -- Insert a new file
-		    table.insert(node.field_collection_images.und, { fid = fid })
+		    table.insert(node.field_collection_images.und, { fid = fid } )
       end
 
       -- Set the remote ID for this rendition
