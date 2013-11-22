@@ -51,7 +51,7 @@ DrupalPublish.getUserToken = function ( props )
 
 end
 
-DrupalPublish.userLogin = function (props)
+DrupalPublish.userLogin = function ( props )
 
   -- The user login process is this:
   --   Get a CSRF token
@@ -120,7 +120,7 @@ DrupalPublish.userLogin = function (props)
 
 end
 
-DrupalPublish.loadNode = function (props, nid)
+DrupalPublish.loadNode = function ( props, nid )
 
   local body, response = LrHttp.get( props.url .. 'lightroom/node/' .. nid, headers )
   local node = JSON.decode(body)
@@ -128,7 +128,7 @@ DrupalPublish.loadNode = function (props, nid)
 
 end
 
-DrupalPublish.saveNode = function (props, node)
+DrupalPublish.saveNode = function ( props, node )
 
   if node.nid then
 
@@ -285,14 +285,9 @@ DrupalPublish.viewForCollectionSettings = function( f, props, info )
     LrDialogs.showError( 'No collection node types configured. You must add \'field_collection_images\' to at least one node type.' )
   end
 
-  if collectionSettings.type == nil then
+  local isPublished = (publishedCollection and publishedCollection:getRemoteId()) and true or false
+  if not isPublished then
     collectionSettings.type = types[1]['value']
-  end
-  if collectionSettings.status == nil then
-    collectionSettings.status = 1
-  end
-  if collectionSettings.promote == nil then
-    collectionSettings.promote = 0
   end
 
   local share = import 'LrView'.share
@@ -306,36 +301,74 @@ DrupalPublish.viewForCollectionSettings = function( f, props, info )
       bind_to_object = assert( collectionSettings ),
       spacing = f:label_spacing(),
       size = 'small',
-
       f:row {
     		f:static_text {
     			title = 'Type:',
     			alignment = 'left',
     		},
-        publishedCollection and publishedCollection:getRemoteId() and
-    	    f:static_text {
-    	      title = title,
-    	    }
-    	    or
-    	    f:popup_menu {
-    	      items = types,
-    	      value = bind 'type',
-    	    },
+  	    f:popup_menu {
+  	      items = types,
+  	      value = bind 'type',
+  	      enabled = not isPublished,
+  	    },
       },
-			f:checkbox {
-				title = "Published",  -- this should be localized via LOC
-				value = bind 'status',
-				checked_value = 1,
-				unchecked_value = 0,
-			},
-			f:checkbox {
-				title = "Promote to front page",  -- this should be localized via LOC
-				value = bind 'promote',
-				checked_value = 1,
-				unchecked_value = 0,
-			},
+      -- may want to get rid of this
+      -- nodes shouldn't be published until they're populated
+--			f:checkbox {
+--				title = "Published",  -- this should be localized via LOC
+--				value = bind 'status',
+--				checked_value = 1,
+--				unchecked_value = 0,
+--				enabled = isPublished
+--			},
 	  }
 	}
+
+end
+
+DrupalPublish.updateCollectionSettings = function( props, info )
+
+  local publishedCollection = assert( info.publishedCollection )
+	local collectionSettings = assert( info.collectionSettings )
+
+  -- User login
+  local user, userToken = DrupalPublish.userLogin( props )
+
+  local remoteId = publishedCollection:getRemoteId()
+
+	if not ( remoteId ) then
+
+    local node = {
+		  uid = user.uid,
+		  type = collectionSettings.type,
+		  title = info.name,
+--      status = collectionSettings.status,
+		}
+
+    -- Create presentation
+    node = DrupalPublish.saveNode( props, node )
+
+    -- todo catch error here
+
+    publishedCollection.catalog:withWriteAccessDo( "Set Remote ID", function()
+      publishedCollection:setRemoteId( node.nid )
+    end)
+
+  else
+
+    local node = DrupalPublish.loadNode( props, remoteId )
+
+    node = {
+      nid = node.nid,
+      title = info.name,
+--      status = collectionSettings.status,
+    }
+
+    node = DrupalPublish.saveNode( props, node )
+
+    -- todo catch error here
+
+	end
 
 end
 
@@ -344,7 +377,6 @@ DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
 	local props = exportContext.propertyTable
 
 	-- Make a local reference to the export parameters.
-
 	local exportSession = exportContext.exportSession
 
 	-- Set progress title.
@@ -354,11 +386,8 @@ DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
 	}
 
   -- Get collection info
+  local publishedCollection = exportContext.publishedCollection
   local publishedCollectionInfo = exportContext.publishedCollectionInfo
-  if publishedCollectionInfo.type == nil then
-    -- todo throw exception if no collection type
-    publishedCollectionInfo.type = 'collection'
-  end
 
   -- User login
   local user, userToken = DrupalPublish.userLogin(props)
@@ -367,44 +396,18 @@ DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
 		title = "Uploading",
 	}
 
-  local node
+  local node = DrupalPublish.loadNode( props, publishedCollectionInfo.remoteId )
   local images = {}
-
-  if publishedCollectionInfo.remoteId then
-
-    node = DrupalPublish.loadNode(props, publishedCollectionInfo.remoteId)
-
-    -- Strip out everything but the fid for the field items
-    -- Drupal will throw SQL exceptions if we try to save width/height, etc.
-    -- Use a table so that we can easily replace values
-    if node.field_collection_images and node.field_collection_images.und then
-      for delta, item in pairs(node.field_collection_images.und) do
-        images[item.fid] = { fid = item.fid }
-      end
+  if node.field_collection_images and node.field_collection_images.und then
+    for delta, item in pairs(node.field_collection_images.und) do
+      images[item.fid] = { fid = item.fid }
     end
-
-    -- Just use the basic fields, so we don't overwrite anything
-    node = {
-      nid = node.nid,
-		  type = publishedCollectionInfo.type,
-      title = publishedCollectionInfo.name,
-      status = publishedCollectionInfo.status,
-      promote = publishedCollectionInfo.promote,
-      field_collection_images = { und = {} },
-    }
-
-  else
-
-		node = {
-		  uid = user.uid,
-		  type = 'collection',
-		  title = publishedCollectionInfo.name,
-      status = publishedCollectionInfo.status,
-      promote = publishedCollectionInfo.promote,
-		  field_collection_images = { und = {} },
-		}
-
   end
+
+  node = {
+    nid = node.nid,
+    field_collection_images = { und = {} },
+  }
 
 	for i, rendition in exportContext:renditions{ stopIfCanceled = true } do
 
@@ -472,9 +475,8 @@ DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
   	table.insert(node.field_collection_images.und, value)
   end
 
-  -- Create presentation
+  -- Save node
   node = DrupalPublish.saveNode( props, node )
-	exportSession:recordRemoteCollectionId( node.nid )
 
 end
 
