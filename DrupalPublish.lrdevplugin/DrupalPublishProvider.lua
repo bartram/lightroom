@@ -411,7 +411,6 @@ DrupalPublish.processRenderedPhotos = function( functionContext, exportContext )
     nid = node.nid,
     title = node.title,
     status = node.status,
-    promote = node.promote,
     field_collection_images = node.field_collection_images,
   }
 
